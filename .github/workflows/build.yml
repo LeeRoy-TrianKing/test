@@ -1,0 +1,90 @@
+name: Build Linux Executable for RHEL 7
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+  workflow_dispatch:  # 允许在 GitHub 网页上手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # 关键：使用 CentOS 7 容器，确保与 RHEL 7 的二进制兼容性
+    container:
+      image: centos:7
+
+    steps:
+    # 1. 检出代码
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    # 2. 安装编译 Python 所需的系统依赖和开发工具
+    - name: 安装系统依赖和开发工具
+      run: |
+        yum groupinstall -y "Development Tools"
+        yum install -y wget openssl-devel zlib-devel bzip2-devel libffi-devel sqlite-devel readline-devel tk-devel gdbm-devel ncurses-devel xz-devel libX11 libXext libXrender libGL
+        yum clean all
+
+    # 3. 下载并编译安装 Python 3.12 (CentOS 7 自带 Python 2.7，无法满足需求)
+    - name: 编译安装 Python 3.12
+      run: |
+        wget https://www.python.org/ftp/python/3.12.3/Python-3.12.3.tgz
+        tar -xzf Python-3.12.3.tgz
+        cd Python-3.12.3
+        # 配置编译选项，启用优化和共享库
+        ./configure --enable-optimizations --enable-shared --with-system-ffi
+        # 使用多核编译，加快速度
+        make -j$(nproc)
+        # 安装到 /usr/local
+        make altinstall
+        cd ..
+        # 清理源码目录，减小环境大小
+        rm -rf Python-3.12.3*
+
+    # 4. 将 Python 的库路径添加到系统环境，以便后续步骤找到
+    - name: 配置环境变量
+      run: |
+        echo "/usr/local/lib" >> /etc/ld.so.conf.d/local.conf
+        ldconfig
+
+    # 5. 安装 Python 依赖包
+    - name: 安装 Python 依赖
+      run: |
+        /usr/local/bin/python3.12 -m pip install --upgrade pip
+        /usr/local/bin/python3.12 -m pip install --no-cache-dir \
+          PySide6==6.6.3.1 \
+          pyais \
+          attrs \
+          packaging \
+          altgraph \
+          pyinstaller
+
+    # 6. 使用 PyInstaller 打包 main.py
+    - name: 使用 PyInstaller 打包
+      run: |
+        /usr/local/bin/python3.12 -m PyInstaller \
+          --onefile \
+          --name="main" \
+          --clean \
+          --noconfirm \
+          --hidden-import=PySide6.QtCore \
+          --hidden-import=PySide6.QtGui \
+          --hidden-import=PySide6.QtWidgets \
+          --hidden-import=pyais.encode \
+          --add-data="/usr/local/lib/python3.12/site-packages/PySide6/Qt/plugins:/plugins" \
+          main.py
+
+    # 7. 查看生成的可执行文件信息
+    - name: 显示可执行文件信息
+      run: |
+        ls -lh dist/main
+        file dist/main
+        ldd dist/main | head -20
+
+    # 8. 上传构建产物
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: main-executable-rhel7
+        path: dist/main
+        retention-days: 30
