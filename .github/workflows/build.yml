@@ -4,50 +4,63 @@ on:
   push:
     branches: [ master, main ]
   pull_request:
-  workflow_dispatch:  # 允许在 GitHub 网页上手动触发
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # 关键：使用 CentOS 7 容器，确保与 RHEL 7 的二进制兼容性
+    # 使用 CentOS 7 容器
     container:
       image: centos:7
+      # 关键：设置环境变量，告诉 actions/checkout 不要使用 Node.js
+      options: --env ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true
 
     steps:
-    # 1. 检出代码
-    - name: 检出代码
-      uses: actions/checkout@v4
+    # 1. 手动安装 git（CentOS 7 自带的 git 版本可能太老）
+    - name: 安装 Git
+      run: |
+        yum install -y git
+        yum clean all
 
-    # 2. 安装编译 Python 所需的系统依赖和开发工具
+    # 2. 手动检出代码（不使用 actions/checkout，避开 Node.js 依赖）
+    - name: 检出代码
+      run: |
+        # 设置 Git 配置（避免一些警告）
+        git config --global user.email "actions@github.com"
+        git config --global user.name "GitHub Actions"
+        
+        # 克隆仓库
+        git clone https://github.com/LeeRoy-TrianKing/test.git .
+        
+        # 检出指定的提交（GitHub Actions 会自动设置 GITHUB_SHA 环境变量）
+        git checkout $GITHUB_SHA
+
+    # 3. 安装系统依赖和开发工具
     - name: 安装系统依赖和开发工具
       run: |
         yum groupinstall -y "Development Tools"
         yum install -y wget openssl-devel zlib-devel bzip2-devel libffi-devel sqlite-devel readline-devel tk-devel gdbm-devel ncurses-devel xz-devel libX11 libXext libXrender libGL
         yum clean all
 
-    # 3. 下载并编译安装 Python 3.12 (CentOS 7 自带 Python 2.7，无法满足需求)
+    # 4. 下载并编译安装 Python 3.12
     - name: 编译安装 Python 3.12
       run: |
         wget https://www.python.org/ftp/python/3.12.3/Python-3.12.3.tgz
         tar -xzf Python-3.12.3.tgz
         cd Python-3.12.3
-        # 配置编译选项，启用优化和共享库
         ./configure --enable-optimizations --enable-shared --with-system-ffi
-        # 使用多核编译，加快速度
         make -j$(nproc)
-        # 安装到 /usr/local
         make altinstall
         cd ..
-        # 清理源码目录，减小环境大小
         rm -rf Python-3.12.3*
 
-    # 4. 将 Python 的库路径添加到系统环境，以便后续步骤找到
+    # 5. 配置环境变量
     - name: 配置环境变量
       run: |
         echo "/usr/local/lib" >> /etc/ld.so.conf.d/local.conf
         ldconfig
 
-    # 5. 安装 Python 依赖包
+    # 6. 安装 Python 依赖
     - name: 安装 Python 依赖
       run: |
         /usr/local/bin/python3.12 -m pip install --upgrade pip
@@ -59,7 +72,7 @@ jobs:
           altgraph \
           pyinstaller
 
-    # 6. 使用 PyInstaller 打包 main.py
+    # 7. 使用 PyInstaller 打包
     - name: 使用 PyInstaller 打包
       run: |
         /usr/local/bin/python3.12 -m PyInstaller \
@@ -74,14 +87,14 @@ jobs:
           --add-data="/usr/local/lib/python3.12/site-packages/PySide6/Qt/plugins:/plugins" \
           main.py
 
-    # 7. 查看生成的可执行文件信息
+    # 8. 显示文件信息
     - name: 显示可执行文件信息
       run: |
         ls -lh dist/main
         file dist/main
         ldd dist/main | head -20
 
-    # 8. 上传构建产物
+    # 9. 上传构建产物
     - name: 上传构建产物
       uses: actions/upload-artifact@v4
       with:
